@@ -40,8 +40,8 @@ def mkdir(path, is_file=True):
         os.makedirs(path)
 
 
-def save_fig(title, brake_type_file_name, experiment_time):
-    path = "figures/%s_%s_%s.png" % (title, brake_type_file_name, experiment_time)
+def save_fig(title, brake_type_file_name, conical_annulus_params, experiment_time):
+    path = "figures/%s/%s_%s_%s.png" % (conical_annulus_params, title, brake_type_file_name, experiment_time)
     mkdir(path)
     print("saving to '%s'" % path)
     plt.savefig(path, dpi=200)
@@ -73,13 +73,14 @@ def savitzky_golay(y, window_size, order, deriv=0, rate=1):
     return np.convolve(m[::-1], y, mode='valid')
 
 
-def get_lookup_tables(experiment_params):
-    ascending_lookup_filename = "lookup_tables/%s_ascending.csv" % str(experiment_params.brake_type_file_name)
+def get_lookup_tables(brake_type):
+    brake_type_file_name = ExperimentInfo.get_paths(brake_type)
+    ascending_lookup_filename = "lookup_tables/%s_ascending.csv" % str(brake_type_file_name)
     with open(ascending_lookup_filename, 'r') as file:
         data = file.read().splitlines()
         ascending_command_to_torque = list(map(float, data))
 
-    descending_lookup_filename = "lookup_tables/%s_descending.csv" % str(experiment_params.brake_type_file_name)
+    descending_lookup_filename = "lookup_tables/%s_descending.csv" % str(brake_type_file_name)
     with open(descending_lookup_filename, 'r') as file:
         data = file.read().splitlines()
         descending_command_to_torque = list(map(float, data))
@@ -124,28 +125,49 @@ def format_torque_data(experiment_info, ascending_command_to_torque, descending_
         if torque_index >= direction_transition:
             commanded_torque_nm_data[-1] *= -1
 
+        if experiment_info.commanded_motor_speed < 0:
+            commanded_torque_nm_data[-1] *= -1
+
     commanded_torque_nm_data = np.array(commanded_torque_nm_data)
 
-    return torque_timestamps, commanded_torque_nm_data
+    if len(experiment_info.commanded_motor_data) > 0:
+        selected_index = 0
+        for index in range(0, len(experiment_info.commanded_motor_data) - 1):
+            current_motor_command = experiment_info.commanded_motor_data[index][1]
+            prev_motor_command = experiment_info.commanded_motor_data[index + 1][1]
+            if current_motor_command != prev_motor_command:
+                selected_index = index + 1
+                break
+
+        direction_change_timestamp = experiment_info.commanded_motor_data[selected_index][0]
+    else:
+        direction_change_timestamp = 0.0
+
+    return torque_timestamps, commanded_torque_nm_data, direction_change_timestamp
 
 
-def format_encoder_data(experiment_info, gear_ratio):
+def format_encoder_data(experiment_info, direction_change_timestamp, gear_ratio):
     encoder_data = np.array(experiment_info.encoder_data)
     encoder_timestamps = encoder_data[:, 0]
+    encoder_1_ticks = encoder_data[:, 1]
+    encoder_2_ticks = encoder_data[:, 2]
 
-    encoder_data[:, 1] -= encoder_data[0, 1]
-    encoder_data[:, 2] -= encoder_data[0, 2]
+    # direction_change_index = 0
+    encoder_1_ticks -= encoder_1_ticks[0]
+    encoder_2_ticks -= encoder_2_ticks[0]
 
-    encoder_data[:, 1] *= gear_ratio
-    encoder_data[:, 2] *= gear_ratio
+    encoder_1_ticks *= gear_ratio
+    encoder_2_ticks *= gear_ratio
+
+    encoder_delta = encoder_1_ticks - encoder_2_ticks
 
     # remove random jumps (software error)
-    encoder_delta = encoder_data[:, 1] - encoder_data[:, 2]
     avg_diff = np.average(encoder_delta)
     std_dev = np.std(encoder_delta)
-    outlier_indices = np.where(np.abs(encoder_delta - avg_diff) > std_dev * 2)
-    encoder_delta = np.delete(encoder_delta, outlier_indices)
-    encoder_timestamps = np.delete(encoder_timestamps, outlier_indices)
+    outlier_indices = np.where(np.abs(encoder_delta - avg_diff) > std_dev * 6)[0]
+
+    encoder_delta_filtered = np.delete(encoder_delta, outlier_indices)
+    encoder_timestamps_filtered = np.delete(encoder_timestamps, outlier_indices)
 
     # # remove instances of the motor shutting off during stall
     # stall_indices = np.where(np.diff(encoder_delta) > 4)[0]
@@ -157,7 +179,17 @@ def format_encoder_data(experiment_info, gear_ratio):
     #     encoder_delta = np.delete(encoder_delta, deletion_indices)
     #     encoder_timestamps = np.delete(encoder_timestamps, deletion_indices)
 
-    return encoder_delta, encoder_timestamps
+    encoder_delta_smoothed = savitzky_golay(encoder_delta_filtered, 501, 5)
+
+    if direction_change_timestamp > 0.0:
+        direction_change_timestamp += 0.5  # add some time, wait for motor to actually change directions
+        direction_change_index = np.argmin(np.abs(encoder_timestamps - direction_change_timestamp))
+
+        # cancel out any gear backlash
+        encoder_delta_smoothed[:direction_change_index] -= encoder_delta_smoothed[0]
+        encoder_delta_smoothed[direction_change_index:] -= encoder_delta_smoothed[direction_change_index]
+
+    return encoder_delta, encoder_timestamps, encoder_delta_smoothed, encoder_delta_filtered, encoder_timestamps_filtered
 
 
 def hysteresis_fn(x, a, b, c):
@@ -165,20 +197,34 @@ def hysteresis_fn(x, a, b, c):
     # return a * np.tan(b * x + c)
 
 
-def analyze_experiment(experiment_params, experiment_time, plot_results=True):
-    gear_ratio = 32.0 / 48.0
-    ascending_command_to_torque, descending_command_to_torque = get_lookup_tables(experiment_params)
+class ExperimentResults:
+    def __init__(self):
+        self.torque_input = None
+        self.encoder_output = None
+        self.encoder_linear_regression = None
+        self.lin_reg_coeffs = None
 
-    experiment_info = ExperimentInfo.load_from_json(experiment_params.brake_type, experiment_time)
+
+def analyze_experiment(brake_type, conical_annulus_params, experiment_time):
+    gear_ratio = 32.0 / 48.0
+    results = ExperimentResults()
+    ascending_command_to_torque, descending_command_to_torque = get_lookup_tables(brake_type)
+
+    experiment_info = ExperimentInfo.load_from_json(brake_type, conical_annulus_params, experiment_time)
 
     settling_time = experiment_info.time_interval / 3
-    torque_timestamps, commanded_torque_nm_data = format_torque_data(experiment_info, ascending_command_to_torque,
-                                                                     descending_command_to_torque, settling_time)
+    torque_timestamps, commanded_torque_nm_data, direction_change_timestamp = \
+        format_torque_data(experiment_info, ascending_command_to_torque,
+                           descending_command_to_torque, settling_time)
 
-    encoder_delta, encoder_timestamps = format_encoder_data(experiment_info, gear_ratio)
-    # print(encoder_timestamps[np.where(encoder_delta > 60)][0])
-    encoder_delta_smoothed = savitzky_golay(encoder_delta, 401, 5)
-    encoder_interp = np.interp(torque_timestamps, encoder_timestamps, encoder_delta_smoothed)
+    format_enc_results = format_encoder_data(experiment_info, direction_change_timestamp, gear_ratio)
+    # encoder_delta = results[0]
+    # encoder_timestamps = results[1]
+    encoder_delta_smoothed = format_enc_results[2]
+    encoder_delta_filtered = format_enc_results[3]
+    encoder_timestamps_filtered = format_enc_results[4]
+
+    encoder_interp = np.interp(torque_timestamps, encoder_timestamps_filtered, encoder_delta_smoothed)
 
     polynomial = np.polyfit(encoder_interp, commanded_torque_nm_data, 1)
     linear_regression_fn = np.poly1d(polynomial)
@@ -186,7 +232,7 @@ def analyze_experiment(experiment_params, experiment_time, plot_results=True):
 
     # popt, pcov = curve_fit(hysteresis_fn, encoder_interp, commanded_torque_nm_data)
 
-    if plot_results:
+    if PLOT_RESULTS:
         new_fig()
         plt.plot(torque_timestamps, commanded_torque_nm_data, '.-', label="torque data")
 
@@ -194,18 +240,22 @@ def analyze_experiment(experiment_params, experiment_time, plot_results=True):
         plt.title(title)
         plt.xlabel("time (s)")
         plt.ylabel("applied torque (N•m)")
-        save_fig(title, experiment_info.brake_type_file_name, experiment_time)
+        if SAVE_FIGS:
+            save_fig(title, experiment_info.brake_type_file_name, conical_annulus_params, experiment_time)
 
         new_fig()
-        plt.plot(encoder_timestamps, encoder_delta, '-.', label="encoder delta", markersize=0.5)
-        plt.plot(encoder_timestamps, encoder_delta_smoothed, linewidth=0.5, label="smoothed")
+        # plt.plot(encoder_timestamps, encoder_delta, '-.', label="encoder delta", markersize=0.5)
+        plt.plot(encoder_timestamps_filtered, encoder_delta_filtered, '-.', label="encoder delta", markersize=0.5)
+        plt.plot(encoder_timestamps_filtered, encoder_delta_smoothed, linewidth=0.5, label="smoothed")
         plt.plot(torque_timestamps, encoder_interp, 'x', markersize=5, color='red', label="interpolated")
+        plt.legend()
 
         title = "Encoder data"
         plt.title(title)
         plt.xlabel("time (s)")
         plt.ylabel("encoder delta (degrees)")
-        save_fig(title, experiment_info.brake_type_file_name, experiment_time)
+        if SAVE_FIGS:
+            save_fig(title, experiment_info.brake_type_file_name, conical_annulus_params, experiment_time)
 
         new_fig()
         plt.plot(encoder_interp, commanded_torque_nm_data, 'x', label="data")
@@ -213,33 +263,47 @@ def analyze_experiment(experiment_params, experiment_time, plot_results=True):
                  label='m=%0.4f, b=%0.4f' % (polynomial[0], polynomial[1]))
         # plt.plot(encoder_interp, hysteresis_fn(encoder_interp, *popt), 'r-',
         #          label='fit: a=%5.3f, b=%5.3f, c=%5.3f' % tuple(popt))
+        plt.plot(0, 0, '+', markersize=15)
         plt.legend()
 
         title = "Hysteresis of conical annulus"
         plt.title(title)
         plt.xlabel("encoder delta (degrees)")
         plt.ylabel("applied torque (N•m)")
-        save_fig(title, experiment_info.brake_type_file_name, experiment_time)
+        if SAVE_FIGS:
+            save_fig(title, experiment_info.brake_type_file_name, conical_annulus_params, experiment_time)
 
         plt.show()
 
-    return commanded_torque_nm_data, encoder_interp, encoder_lin_reg
+    results.torque_input = commanded_torque_nm_data
+    results.encoder_output = encoder_interp
+    results.encoder_linear_regression = encoder_lin_reg
+    results.lin_reg_coeffs = polynomial
+
+    return results
 
 
-def plot_combined_experiments(torques, enc_interps, enc_lin_regs):
-    assert len(torques) == len(enc_interps) == len(enc_lin_regs)
-    for index in range(len(torques)):
-        plt.plot(enc_interps[index], torques[index], 'x', label="interp #%s" % (index + 1))
-        plt.plot(enc_interps[index], enc_lin_regs[index], label="regression #%s" % (index + 1))
+def plot_combined_experiments(*results):
+    for index in range(len(results)):
+        plt.plot(results[index].encoder_output, results[index].torque_input, 'x', label="interp #%s" % (index + 1))
+        plt.plot(results[index].encoder_output, results[index].encoder_linear_regression,
+                 label='m=%0.4f, b=%0.4f' % (results[index].lin_reg_coeffs[0], results[index].lin_reg_coeffs[1]))
 
+    plt.plot(0, 0, '+', markersize=25)
     plt.legend()
     plt.show()
 
 
-# torque_large, enc_interp_large, enc_lin_large = analyze_experiment(large_brake_experiment, 1528141782.467071, plot_results=True)
-torque_small, enc_interp_small, enc_lin_small = analyze_experiment(small_brake_experiment, 1528165346.742316, plot_results=True)
-# plot_combined_experiments(
-#     [torque_large, torque_small],
-#     [enc_interp_large, enc_interp_small],
-#     [enc_lin_large, enc_lin_small]
-# )
+SAVE_FIGS = False
+PLOT_RESULTS = False
+
+results_large_1 = analyze_experiment(ExperimentInfo.LARGE_BRAKE, "1.0x0.75x0.125", 1528141782.467071)
+results_small_1 = analyze_experiment(ExperimentInfo.SMALL_BRAKE, "1.0x0.75x0.125", 1528165346.742316)
+# plot_combined_experiments(results_large_1, results_small_1)
+
+results_large_2 = analyze_experiment(ExperimentInfo.LARGE_BRAKE, "1.5x0.75x0.125", 1528522129.6387455)
+results_small_2 = analyze_experiment(ExperimentInfo.SMALL_BRAKE, "1.5x0.75x0.125", 1528484673.3223443)
+# plot_combined_experiments(results_large_2, results_small_2)
+
+# plot_combined_experiments(results_large_1, results_large_2)
+plot_combined_experiments(results_small_1, results_small_2)

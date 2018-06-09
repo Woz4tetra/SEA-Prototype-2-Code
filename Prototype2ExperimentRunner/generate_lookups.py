@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 
 # the datasheet for the small brake uses units of oz-in while the large brake datasheet uses lb-in :'(((((
 
+# set to false if encoders were reset at the start
+INCLUDE_FRICTION_TORQUE = False
 
 def convert_percent_current_to_amps(array, max_amps):
     array[:, 1] *= max_amps / 100.0
@@ -22,7 +24,8 @@ small_brake_max_current = 0.10
 large_brake_max_applied_current = 0.31
 small_brake_max_applied_current = 0.095
 
-large_brake_min_torque_lbin = 0.3
+if INCLUDE_FRICTION_TORQUE:
+    large_brake_min_torque_lbin = 0.3
 small_brake_min_torque_ozin = 0.1
 
 ozin_to_nm = 0.0070615518333333
@@ -49,7 +52,8 @@ _lba_torque_to_current = np.array([
     [13.52552417427945, 89.84432608157269],
     [15.030276711000427, 99.82699022285472],
 ])
-_lba_torque_to_current[:, 0] += large_brake_min_torque_lbin
+if INCLUDE_FRICTION_TORQUE:
+    _lba_torque_to_current[:, 0] += large_brake_min_torque_lbin
 convert_percent_current_to_amps(_lba_torque_to_current, large_brake_max_current)
 convert_lbin_to_nm(_lba_torque_to_current)
 
@@ -67,7 +71,8 @@ _lbd_torque_to_current = np.array([
     [0.6398048059046566, 10.154069392268273],
     [0.031242914796173693, 0.16108047396307512],
 ])
-_lbd_torque_to_current[:, 0] += large_brake_min_torque_lbin
+if INCLUDE_FRICTION_TORQUE:
+    _lbd_torque_to_current[:, 0] += large_brake_min_torque_lbin
 convert_percent_current_to_amps(_lbd_torque_to_current, large_brake_max_current)
 convert_lbin_to_nm(_lbd_torque_to_current)
 
@@ -90,7 +95,8 @@ _sba_torque_to_current = np.array([
     [4.23404255319149, 90.09671179883946],
     [5.0, 100.0],
 ])
-_sba_torque_to_current[:, 0] += small_brake_min_torque_ozin
+if INCLUDE_FRICTION_TORQUE:
+    _sba_torque_to_current[:, 0] += small_brake_min_torque_ozin
 convert_percent_current_to_amps(_sba_torque_to_current, small_brake_max_current)
 convert_ozin_to_nm(_sba_torque_to_current)
 
@@ -113,7 +119,8 @@ _sbd_torque_to_current = np.array([
     [0.06382978723404253, 4.835589941972923],
     [-0.005802707930366857, -0.1160541586073478],
 ])
-_sbd_torque_to_current[:, 0] += small_brake_min_torque_ozin
+if INCLUDE_FRICTION_TORQUE:
+    _sbd_torque_to_current[:, 0] += small_brake_min_torque_ozin
 convert_percent_current_to_amps(_sbd_torque_to_current, small_brake_max_current)
 convert_ozin_to_nm(_sbd_torque_to_current)
 
@@ -149,14 +156,14 @@ _sb_current_to_bytes = np.array([
     [0.062, 16 * 6],
     [0.071, 16 * 7],
     [0.081, 16 * 8],
-    [0.090, 16 * 9],
-    [0.095, 16 * 10],
-    [0.095, 16 * 11],
-    [0.095, 16 * 12],
-    [0.095, 16 * 13],
-    [0.095, 16 * 14],
-    [0.095, 16 * 15],
-    [0.095, 255],
+    [0.093, 16 * 9],
+    [0.097, 16 * 10],
+    [0.097, 16 * 11],
+    [0.097, 16 * 12],
+    [0.097, 16 * 13],
+    [0.097, 16 * 14],
+    [0.097, 16 * 15],
+    [0.097, 255],
 ])
 
 
@@ -165,7 +172,8 @@ def get_brake_lookup_table(torque_to_current, current_to_bytes, ascending=True, 
         torque_to_current = np.flip(torque_to_current, 0)
     byte_range = np.array(range(0, 256))
 
-    torque_to_current[:, 0] += no_brake_braking_torque_nm
+    if INCLUDE_FRICTION_TORQUE:
+        torque_to_current[:, 0] += no_brake_braking_torque_nm
     interp_torque = np.interp(current_to_bytes[:, 0], torque_to_current[:, 1], torque_to_current[:, 0])
 
     lookup_table = np.interp(byte_range, current_to_bytes[:, 1], interp_torque)

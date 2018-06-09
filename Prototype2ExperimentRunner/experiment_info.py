@@ -8,9 +8,14 @@ class ExperimentInfo:
 
     def __init__(self):
         self.brake_type = ExperimentInfo.LARGE_BRAKE
-        self.conical_annulus_width = 0.0
-        self.conical_annulus_height = 0.0
+        self.conical_annulus_length = 0.0
+        self.conical_annulus_od = 0.0
         self.conical_annulus_wall_thickness = 0.0
+
+        self.conical_annulus_length_in = 0.0
+        self.conical_annulus_od_in = 0.0
+        self.conical_annulus_wall_thickness_in = 0.0
+
         self.commanded_motor_speed = 0
         self.command_interval = 0.0
         self.time_interval = 0.0
@@ -19,9 +24,11 @@ class ExperimentInfo:
         self.brake_type_file_name = ""
 
         self.commanded_torque_data = []
+        self.commanded_motor_data = []
         self.encoder_data = []
 
         self.start_time = time.time()
+        self.initial_encoder_time = None
 
         self.encoder_start_values = [0.0, 0.0]
 
@@ -35,19 +42,22 @@ class ExperimentInfo:
         return brake_type_file_name
 
     @classmethod
-    def load_from_params(cls, brake_type, width_in, height_in, wall_thickness_in,
+    def load_from_params(cls, brake_type, length_in, outer_diameter_in, wall_thickness_in,
                          commanded_motor_speed, command_interval, time_interval, repeats):
         in_to_cm = 2.54
 
         new_obj = cls()
         new_obj.brake_type = brake_type
-        new_obj.conical_annulus_width = width_in * in_to_cm
-        new_obj.conical_annulus_height = height_in * in_to_cm
+        new_obj.conical_annulus_length_in = length_in
+        new_obj.conical_annulus_od_in = outer_diameter_in
+        new_obj.conical_annulus_wall_thickness_in = wall_thickness_in
+        new_obj.conical_annulus_length = length_in * in_to_cm
+        new_obj.conical_annulus_od = outer_diameter_in * in_to_cm
         new_obj.conical_annulus_wall_thickness = wall_thickness_in * in_to_cm
         new_obj.commanded_motor_speed = commanded_motor_speed
         new_obj.command_interval = command_interval
         new_obj.time_interval = time_interval
-        new_obj.max_torque_command = 255 if new_obj.brake_type == ExperimentInfo.SMALL_BRAKE else 190
+        new_obj.max_torque_command = 168 if new_obj.brake_type == ExperimentInfo.SMALL_BRAKE else 174
         new_obj.repeats = repeats
 
         new_obj.brake_type_file_name = cls.get_paths(brake_type)
@@ -55,46 +65,59 @@ class ExperimentInfo:
         return new_obj
 
     @classmethod
-    def load_from_json(cls, brake_type, experiment_time):
+    def load_from_json(cls, brake_type, conical_annulus_params, experiment_time):
         brake_type_file_name = cls.get_paths(brake_type)
 
-        with open("experiments/%s_%s.json" % (brake_type_file_name, experiment_time)) as file:
+        with open(
+                "experiments/%s/%s_%s.json" % (conical_annulus_params, brake_type_file_name, experiment_time)) as file:
             params = json.load(file)
 
         new_obj = cls()
         new_obj.__dict__ = params
+        if "initial_encoder_time" not in params:
+            new_obj.initial_encoder_time = new_obj.start_time
+
+        if "commanded_motor_data" not in params:
+            new_obj.commanded_motor_data = []
 
         return new_obj
 
     def record_torque_command(self, timestamp, command):
         self.commanded_torque_data.append((timestamp, command))
 
+    def record_motor_command(self, timestamp, command):
+        self.commanded_motor_data.append((timestamp, command))
+
     def record_encoders(self, timestamp, encoder1_deg, encoder2_deg):
         self.encoder_data.append((timestamp, encoder1_deg, encoder2_deg))
 
-    def record_encoder_start_vals(self, encoder1_deg, encoder2_deg):
+    def record_encoder_start_vals(self, timestamp, encoder1_deg, encoder2_deg):
+        self.initial_encoder_time = timestamp
         self.encoder_start_values[0] = encoder1_deg
         self.encoder_start_values[1] = encoder2_deg
+        print("initial encoder values @ %s: %s, %s" % (timestamp, encoder1_deg, encoder2_deg))
 
     def write_experiment_to_file(self):
-        path = "experiments/%s_%s.json" % (self.brake_type_file_name, self.start_time)
+        conical_annulus_params = "%sx%sx%s" % (
+        self.conical_annulus_length_in, self.conical_annulus_od_in, self.conical_annulus_wall_thickness_in)
+        path = "experiments/%s/%s_%s.json" % (conical_annulus_params, self.brake_type_file_name, self.start_time)
         with open(path, 'w+') as file:
             json.dump(self.__dict__, file)
 
 
-WIDTH_IN = 0.5
-HEIGHT_IN = 0.5
-WALL_THICKNESS_IN = 0.025
+LENGTH = 1.5
+OUTER_DIAMETER = 0.75
+WALL_THICKNESS_IN = 0.125
 COMMANDED_MOTOR_SPEED = 255
 
 large_brake_experiment = ExperimentInfo.load_from_params(
     ExperimentInfo.LARGE_BRAKE,
-    WIDTH_IN, HEIGHT_IN, WALL_THICKNESS_IN, COMMANDED_MOTOR_SPEED,
+    LENGTH, OUTER_DIAMETER, WALL_THICKNESS_IN, COMMANDED_MOTOR_SPEED,
     16, 7, 3
 )
 
 small_brake_experiment = ExperimentInfo.load_from_params(
     ExperimentInfo.SMALL_BRAKE,
-    WIDTH_IN, HEIGHT_IN, WALL_THICKNESS_IN, COMMANDED_MOTOR_SPEED,
+    LENGTH, OUTER_DIAMETER, WALL_THICKNESS_IN, COMMANDED_MOTOR_SPEED,
     8, 7, 2
 )

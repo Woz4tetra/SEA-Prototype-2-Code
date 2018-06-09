@@ -1,3 +1,4 @@
+#include <Arduino.h>
 
 class AbsoluteEncoder
 {
@@ -11,37 +12,56 @@ private:
     double encoder_angle;
     int32_t rotations;
     bool is_reversed;
-public:
-    AbsoluteEncoder(int analog_pin) {
-        this->analog_pin = analog_pin;
-        encoder_angle = 0.0;
-        prev_enc_val = 0;
-        curr_enc_val = 0;
-        rotations = 0;
-        is_reversed = false;
-    };
+    int encoder_min_val, encoder_max_val;
 
-    void begin() {
-        pinMode(analog_pin, INPUT);
-    }
-
-    void read()
+    void read_into_curr_val()
     {
-        prev_enc_val = curr_enc_val;
+        // TODO: find out why analogRead glitches and gives a random value sometimes
         if (is_reversed) {
             curr_enc_val = 1024 - analogRead(analog_pin);
         }
         else {
             curr_enc_val = analogRead(analog_pin);
         }
-        encoder_angle = 360.0 * (curr_enc_val - ENCODER_MIN_VAL) / (ENCODER_MAX_VAL - ENCODER_MIN_VAL);
 
+        if (curr_enc_val > encoder_max_val) {
+            curr_enc_val = encoder_max_val;
+        }
+        if (curr_enc_val < encoder_min_val) {
+            curr_enc_val = encoder_min_val;
+        }
+    }
+public:
+    AbsoluteEncoder(int analog_pin, bool is_reversed = false, int encoder_min_val = ENCODER_MIN_VAL, int encoder_max_val = ENCODER_MAX_VAL) {
+        this->analog_pin = analog_pin;
+        encoder_angle = 0.0;
+        prev_enc_val = -1;
+        curr_enc_val = -1;
+        rotations = 0;
+        this->is_reversed = is_reversed;
+        this->encoder_min_val = encoder_min_val;
+        this->encoder_max_val = encoder_max_val;
+    };
+
+    void begin() {
+        pinMode(analog_pin, INPUT);
+        read_into_curr_val();
+        prev_enc_val = curr_enc_val;
+    }
+
+    void read()
+    {
+        prev_enc_val = curr_enc_val;
+        read_into_curr_val();
+
+        encoder_angle = 360.0 * (curr_enc_val - encoder_min_val) / (encoder_max_val - encoder_min_val);
         if (curr_enc_val - prev_enc_val > ENCODER_CROSSOVER_THRESHOLD) {
             rotations--;
         }
         if (prev_enc_val - curr_enc_val > ENCODER_CROSSOVER_THRESHOLD) {
             rotations++;
         }
+        // encoder_angle = fmod(encoder_angle, 360.0);
     };
 
     double getAngle() {
@@ -56,8 +76,7 @@ public:
         return rotations;
     };
 
-    void reverse() {
-        is_reversed = !is_reversed;
+    int getAnalogValue() {
+        return curr_enc_val;
     }
-
 };

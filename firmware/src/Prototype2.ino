@@ -8,13 +8,14 @@
 
 ArduinoFactoryBridge bridge("prototype2");
 AbsoluteEncoder enc1(A0);
-AbsoluteEncoder enc2(A1);
+AbsoluteEncoder enc2(A1, true);
 
 Adafruit_MotorShield AFMS = Adafruit_MotorShield();
 
 Adafruit_DCMotor *motor = AFMS.getMotor(4);
 
 int brake_val = 0;
+int motor_val = 0;
 
 void setup() {
     bridge.begin();
@@ -24,7 +25,6 @@ void setup() {
     // MCUSR |= _BV(PUD);
     enc1.begin();
     enc2.begin();
-    enc2.reverse();
 
     AFMS.begin();
 
@@ -54,7 +54,7 @@ void loop()
     enc2.read();
 
     if (!bridge.isPaused()) {
-        bridge.write("enc", "ff", enc1.getFullAngle(), enc2.getFullAngle());
+        bridge.write("enc", "ffdd", enc1.getFullAngle(), enc2.getFullAngle(), enc1.getAnalogValue(), enc2.getAnalogValue());
         delay(1);
     }
 
@@ -69,7 +69,11 @@ void loop()
                         analogWrite(BRAKE_CONTROL_PIN, brake_val);
                         bridge.write("brake", "d", brake_val);  // echo value back
                         break;
-                    case 'm': setMotorSpeed(command.substring(1).toInt()); break;
+                    case 'm':
+                        motor_val = command.substring(1).toInt();
+                        setMotorSpeed(motor_val);
+                        bridge.write("motor", "d", motor_val);  // echo value back
+                        break;
                 }
                 break;
             // case 1:  // start
