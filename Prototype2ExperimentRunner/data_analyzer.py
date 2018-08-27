@@ -146,7 +146,8 @@ def format_torque_data(experiment_info, ascending_command_to_torque, descending_
     return torque_timestamps, commanded_torque_nm_data, direction_change_timestamp
 
 
-def format_encoder_data(experiment_info, direction_change_timestamp, gear_ratio):
+def format_encoder_data(experiment_info, direction_change_timestamp, gear_ratio, direction_switch_time_offset,
+                        start_time_offset):
     encoder_data = np.array(experiment_info.encoder_data)
     encoder_timestamps = encoder_data[:, 0]
     encoder_1_ticks = encoder_data[:, 1]
@@ -182,11 +183,12 @@ def format_encoder_data(experiment_info, direction_change_timestamp, gear_ratio)
     encoder_delta_smoothed = savitzky_golay(encoder_delta_filtered, 501, 5)
 
     if direction_change_timestamp > 0.0:
-        direction_change_timestamp += 0.5  # add some time, wait for motor to actually change directions
+        direction_change_timestamp += direction_switch_time_offset  # add some time, wait for motor to actually change directions
         direction_change_index = np.argmin(np.abs(encoder_timestamps - direction_change_timestamp))
+        start_index = np.argmin(np.abs(encoder_timestamps - start_time_offset))
 
         # cancel out any gear backlash
-        encoder_delta_smoothed[:direction_change_index] -= encoder_delta_smoothed[0]
+        encoder_delta_smoothed[:direction_change_index] -= encoder_delta_smoothed[start_index]
         encoder_delta_smoothed[direction_change_index:] -= encoder_delta_smoothed[direction_change_index]
 
     return encoder_delta, encoder_timestamps, encoder_delta_smoothed, encoder_delta_filtered, encoder_timestamps_filtered
@@ -204,8 +206,14 @@ class ExperimentResults:
         self.encoder_linear_regression = None
         self.lin_reg_coeffs = None
 
+        self.length = 0.0
+        self.outer_diameter = 0.0
+        self.wall_thickness = 0.0
+        self.color = None
 
-def analyze_experiment(brake_type, conical_annulus_params, experiment_time):
+
+def analyze_experiment(brake_type, conical_annulus_params, experiment_time, direction_switch_time_offset=0.5,
+                       start_time_offset=0.0):
     gear_ratio = 32.0 / 48.0
     results = ExperimentResults()
     ascending_command_to_torque, descending_command_to_torque = get_lookup_tables(brake_type)
@@ -217,7 +225,8 @@ def analyze_experiment(brake_type, conical_annulus_params, experiment_time):
         format_torque_data(experiment_info, ascending_command_to_torque,
                            descending_command_to_torque, settling_time)
 
-    format_enc_results = format_encoder_data(experiment_info, direction_change_timestamp, gear_ratio)
+    format_enc_results = format_encoder_data(experiment_info, direction_change_timestamp, gear_ratio,
+                                             direction_switch_time_offset, start_time_offset)
     # encoder_delta = results[0]
     # encoder_timestamps = results[1]
     encoder_delta_smoothed = format_enc_results[2]
@@ -279,15 +288,29 @@ def analyze_experiment(brake_type, conical_annulus_params, experiment_time):
     results.encoder_output = encoder_interp
     results.encoder_linear_regression = encoder_lin_reg
     results.lin_reg_coeffs = polynomial
+    results.length = experiment_info.conical_annulus_length_in
+    results.outer_diameter = experiment_info.conical_annulus_od_in
+    results.wall_thickness = experiment_info.conical_annulus_wall_thickness_in
+
+    color_offset = results.outer_diameter / 1.5
+    color_strength = results.length / 2.0
+    if results.length == 1.0:
+        results.color = (color_strength, color_offset, color_offset)
+    elif results.length == 1.5:
+        results.color = (color_offset, color_strength, color_offset)
+    else:
+        results.color = (color_offset, color_offset, color_strength)
 
     return results
 
 
 def plot_combined_experiments(*results):
-    for index in range(len(results)):
-        plt.plot(results[index].encoder_output, results[index].torque_input, 'x', label="interp #%s" % (index + 1))
-        plt.plot(results[index].encoder_output, results[index].encoder_linear_regression,
-                 label='m=%0.4f, b=%0.4f' % (results[index].lin_reg_coeffs[0], results[index].lin_reg_coeffs[1]))
+    for result in results:
+        plt.plot(result.encoder_output, result.torque_input, 'x', color=result.color)
+
+        label = "%sx%s" % (result.length, result.outer_diameter)
+        plt.plot(result.encoder_output, result.encoder_linear_regression, color=result.color,
+                 label='%s: m=%0.4f, b=%0.4f' % (label, result.lin_reg_coeffs[0], result.lin_reg_coeffs[1]))
 
     plt.plot(0, 0, '+', markersize=25)
     plt.legend()
@@ -298,12 +321,30 @@ SAVE_FIGS = False
 PLOT_RESULTS = False
 
 results_large_1 = analyze_experiment(ExperimentInfo.LARGE_BRAKE, "1.0x0.75x0.125", 1528141782.467071)
-results_small_1 = analyze_experiment(ExperimentInfo.SMALL_BRAKE, "1.0x0.75x0.125", 1528165346.742316)
+# results_small_1 = analyze_experiment(ExperimentInfo.SMALL_BRAKE, "1.0x0.75x0.125", 1528165346.742316)
 # plot_combined_experiments(results_large_1, results_small_1)
 
 results_large_2 = analyze_experiment(ExperimentInfo.LARGE_BRAKE, "1.5x0.75x0.125", 1528522129.6387455)
-results_small_2 = analyze_experiment(ExperimentInfo.SMALL_BRAKE, "1.5x0.75x0.125", 1528484673.3223443)
+# results_small_2 = analyze_experiment(ExperimentInfo.SMALL_BRAKE, "1.5x0.75x0.125", 1528484673.3223443)
 # plot_combined_experiments(results_large_2, results_small_2)
 
-# plot_combined_experiments(results_large_1, results_large_2)
-plot_combined_experiments(results_small_1, results_small_2)
+results_large_3 = analyze_experiment(ExperimentInfo.LARGE_BRAKE, "2.0x0.75x0.125", 1528652317.385782)
+# results_small_3 = analyze_experiment(ExperimentInfo.SMALL_BRAKE, "2.0x0.75x0.125", 1528686077.199882)
+# plot_combined_experiments(results_large_3, results_small_3)
+
+results_large_4 = analyze_experiment(ExperimentInfo.LARGE_BRAKE, "1.0x1.125x0.125", 1528919948.7649128)
+# results_small_4 = analyze_experiment(ExperimentInfo.SMALL_BRAKE, "1.0x1.125x0.125", 1528917061.037878)
+# plot_combined_experiments(results_large_4, results_small_4)
+
+results_large_5 = analyze_experiment(ExperimentInfo.LARGE_BRAKE, "1.5x1.125x0.125", 1528999619.6089401)
+# results_small_5 = analyze_experiment(ExperimentInfo.SMALL_BRAKE, "1.5x1.125x0.125", 1529003381.230422)
+# plot_combined_experiments(results_large_5, results_small_5)
+
+
+results_large_6 = analyze_experiment(ExperimentInfo.LARGE_BRAKE, "2.0x1.125x0.125", 1529093204.900008)
+# results_small_6 = analyze_experiment(ExperimentInfo.SMALL_BRAKE, "2.0x1.125x0.125", 1529091554.6897202, 1.0)
+# plot_combined_experiments(results_large_6, results_small_6)
+
+plot_combined_experiments(results_large_1, results_large_2, results_large_3, results_large_4, results_large_5,
+                          results_large_6)
+# plot_combined_experiments(results_small_2, results_small_3, results_small_4, results_small_5, results_small_6)

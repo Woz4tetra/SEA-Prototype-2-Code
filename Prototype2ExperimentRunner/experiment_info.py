@@ -1,3 +1,4 @@
+import os
 import json
 import time
 
@@ -66,6 +67,7 @@ class ExperimentInfo:
 
     @classmethod
     def load_from_json(cls, brake_type, conical_annulus_params, experiment_time):
+        cm_to_in = 1 / 2.54
         brake_type_file_name = cls.get_paths(brake_type)
 
         with open(
@@ -79,6 +81,13 @@ class ExperimentInfo:
 
         if "commanded_motor_data" not in params:
             new_obj.commanded_motor_data = []
+
+        if "conical_annulus_length_in" not in params:
+            new_obj.conical_annulus_length_in = round(new_obj.conical_annulus_length * cm_to_in, 4)
+        if "conical_annulus_od_in" not in params:
+            new_obj.conical_annulus_od_in = round(new_obj.conical_annulus_od * cm_to_in, 4)
+        if "conical_annulus_wall_thickness_in" not in params:
+            new_obj.conical_annulus_wall_thickness_in = round(new_obj.conical_annulus_wall_thickness * cm_to_in, 4)
 
         return new_obj
 
@@ -101,12 +110,16 @@ class ExperimentInfo:
         conical_annulus_params = "%sx%sx%s" % (
         self.conical_annulus_length_in, self.conical_annulus_od_in, self.conical_annulus_wall_thickness_in)
         path = "experiments/%s/%s_%s.json" % (conical_annulus_params, self.brake_type_file_name, self.start_time)
+
+        if not os.path.isdir(os.path.dirname(path)):
+            os.makedirs(os.path.dirname(path))
+
         with open(path, 'w+') as file:
             json.dump(self.__dict__, file)
 
 
-LENGTH = 1.5
-OUTER_DIAMETER = 0.75
+LENGTH = 2.0
+OUTER_DIAMETER = 1.125
 WALL_THICKNESS_IN = 0.125
 COMMANDED_MOTOR_SPEED = 255
 

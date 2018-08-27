@@ -20,7 +20,6 @@ class Prototype2bridge(Node):
         self.prototype2_bridge_arduino.start()
 
     async def loop(self):
-        broadcast_timer = time.time()
         prev_brake_val = 0
         cycle_num = 1
         initial_enc_recorded = False
@@ -52,9 +51,6 @@ class Prototype2bridge(Node):
 
                 self.experiment_info.record_encoders(packet.timestamp, encoder1_deg, encoder2_deg)
                 await self.broadcast(packet)
-                # if time.time() - broadcast_timer > 0.001:
-                #     await self.broadcast(packet)
-                #     broadcast_timer = time.time()
 
             elif packet.name == "brake":
                 brake_val = packet.data[0]

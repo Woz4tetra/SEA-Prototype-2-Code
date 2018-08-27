@@ -26,8 +26,8 @@ class ExperimentOrchestrator(Orchestrator):
 
 
 def main():
-    run(ExperimentOrchestrator, large_brake_experiment)
-    # run(ExperimentOrchestrator, small_brake_experiment)
+    # run(ExperimentOrchestrator, large_brake_experiment)  # no extra resistor
+    run(ExperimentOrchestrator, small_brake_experiment)  # with extra resistor
 
 
 main()

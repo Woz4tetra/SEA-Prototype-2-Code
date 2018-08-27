@@ -5,7 +5,7 @@ from atlasbuggy import Node
 
 
 class DataPlotter(Node):
-    def __init__(self, enabled=True, time_data_window=120.0):
+    def __init__(self, enabled=True):
         super(DataPlotter, self).__init__(enabled)
 
         self.pause_time = 1 / 30
@@ -16,10 +16,13 @@ class DataPlotter(Node):
         self.prototype2_bridge_sub = self.define_subscription(self.prototype2_bridge_tag)
         self.prototype2_bridge_queue = None
 
-        self.time_data_window = time_data_window
+        self.diff_plot_time_window = 120.0
+        self.enc_plot_time_window = 5.0
+
+        self.encoder_diff_timestamps = []
+        self.encoder_diff_data = []
 
         self.encoder_timestamps = []
-        self.encoder_diff_data = []
         self.encoder_data_1 = []
         self.encoder_data_2 = []
 
@@ -73,15 +76,18 @@ class DataPlotter(Node):
                 continue
 
             await self.get_encoder_data()
-            if len(self.encoder_timestamps) == 0:
+            if len(self.encoder_diff_timestamps) == 0:
                 await self.draw()
                 continue
 
-            while self.encoder_timestamps[-1] - self.encoder_timestamps[0] > self.time_data_window:
+            while self.encoder_diff_timestamps[-1] - self.encoder_diff_timestamps[0] > self.diff_plot_time_window:
+                self.encoder_diff_timestamps.pop(0)
+                self.encoder_diff_data.pop(0)
+
+            while self.encoder_timestamps[-1] - self.encoder_timestamps[0] > self.enc_plot_time_window:
+                self.encoder_timestamps.pop(0)
                 self.encoder_data_1.pop(0)
                 self.encoder_data_2.pop(0)
-                self.encoder_timestamps.pop(0)
-                self.encoder_diff_data.pop(0)
 
             self.plot_data()
             await self.draw()
@@ -93,7 +99,7 @@ class DataPlotter(Node):
         self.encoder_line_2.set_xdata(self.encoder_timestamps)
         self.encoder_line_2.set_ydata(self.encoder_data_2)
 
-        self.diff_line.set_xdata(self.encoder_timestamps)
+        self.diff_line.set_xdata(self.encoder_diff_timestamps)
         self.diff_line.set_ydata(self.encoder_diff_data)
 
         self.encoder_plot.relim()
@@ -107,19 +113,20 @@ class DataPlotter(Node):
             # message = await asyncio.wait_for(self.prototype2_bridge_queue.get(), timeout=1)
             message = self.prototype2_bridge_queue.get_nowait()
 
-            # if self.initial_val_enc_1 is None:
-            #     self.initial_val_enc_1 = message.data[0]
-            #
-            # if self.initial_val_enc_2 is None:
-            #     self.initial_val_enc_2 = message.data[1]
-            #
-            # enc1_angle = (message.data[0] - self.initial_val_enc_1) * self.gear_ratio
-            # enc2_angle = (message.data[1] - self.initial_val_enc_2) * self.gear_ratio
+            if self.initial_val_enc_1 is None:
+                self.initial_val_enc_1 = message.data[0]
 
-            enc1_angle = message.data[0] * self.gear_ratio
-            enc2_angle = message.data[1] * self.gear_ratio
+            if self.initial_val_enc_2 is None:
+                self.initial_val_enc_2 = message.data[1]
+
+            enc1_angle = (message.data[0] - self.initial_val_enc_1) * self.gear_ratio
+            enc2_angle = (message.data[1] - self.initial_val_enc_2) * self.gear_ratio
+
+            # enc1_angle = message.data[0] * self.gear_ratio
+            # enc2_angle = message.data[1] * self.gear_ratio
 
             self.encoder_timestamps.append(message.timestamp)
+            self.encoder_diff_timestamps.append(message.timestamp)
             self.encoder_diff_data.append(enc1_angle - enc2_angle)
             self.encoder_data_1.append(message.data[2])
             self.encoder_data_2.append(message.data[3])

@@ -1,8 +1,11 @@
-import os
+# import os
 # import pickle
 import asyncio
 from tkinter import *
 from atlasbuggy import Node
+
+import matplotlib
+matplotlib.use("TkAgg")  # keeps tkinter happy
 
 
 class TkinterGUI(Node):
